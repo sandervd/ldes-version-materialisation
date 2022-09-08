@@ -18,11 +18,25 @@ package be.vlaanderen.informatievlaanderen.processors;
 
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
+import org.eclipse.rdf4j.model.Model;
+import org.eclipse.rdf4j.model.Statement;
+import org.eclipse.rdf4j.model.ValueFactory;
+import org.eclipse.rdf4j.model.impl.SimpleValueFactory;
+import org.eclipse.rdf4j.model.impl.TreeModel;
+import org.eclipse.rdf4j.model.util.Models;
+import org.eclipse.rdf4j.rio.RDFFormat;
+import org.eclipse.rdf4j.rio.Rio;
+import org.eclipse.rdf4j.rio.WriterConfig;
+import org.eclipse.rdf4j.rio.helpers.BasicWriterSettings;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.*;
+
 
 public class MyProcessorTest {
+
+    public static final ValueFactory vf = SimpleValueFactory.getInstance();
 
     private TestRunner testRunner;
 
@@ -31,9 +45,23 @@ public class MyProcessorTest {
         testRunner = TestRunners.newTestRunner(MyProcessor.class);
     }
 
+    /**
+     * Assert that a test file can be version materialised successfully.
+     *
+     * @throws IOException
+     */
     @Test
-    public void testProcessor() {
+    public void testVersionMaterialise() throws IOException {
+        InputStream versionedInput = new FileInputStream("src/test/resources/ldes-member-versioned.ttl");
+        Model VersionedModel = Rio.parse(versionedInput, "", RDFFormat.TURTLE);
 
+        InputStream unVersionedInput = new FileInputStream("src/test/resources/ldes-member-unversioned.ttl");
+        Model ComparisonModel = Rio.parse(unVersionedInput, "", RDFFormat.TURTLE);
+
+        Model unversionedModel = VersionMaterialiser.versionMaterialise(VersionedModel, vf.createIRI("http://purl.org/dc/terms/isVersionOf"));
+        Model membersOnlyModel = VersionMaterialiser.reduceToLDESMemberOnlyModel(unversionedModel);
+
+        assert Models.isomorphic(membersOnlyModel, ComparisonModel);
     }
 
 }
