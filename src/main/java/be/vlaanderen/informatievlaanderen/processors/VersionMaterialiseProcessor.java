@@ -44,7 +44,7 @@ import static be.vlaanderen.informatievlaanderen.processors.VersionMaterialiser.
 
 @Tags({"ldes, vsds"})
 @CapabilityDescription("Version materialisation of an LDES stream")
-public class MyProcessor extends AbstractProcessor {
+public class VersionMaterialiseProcessor extends AbstractProcessor {
 
     public static final ValueFactory vf = SimpleValueFactory.getInstance();
     public static final PropertyDescriptor IS_VERSION_OF = new PropertyDescriptor
@@ -56,9 +56,9 @@ public class MyProcessor extends AbstractProcessor {
             .addValidator(StandardValidators.URI_VALIDATOR)
             .build();
 
-    public static final Relationship MY_RELATIONSHIP = new Relationship.Builder()
-            .name("MY_RELATIONSHIP")
-            .description("Example relationship")
+    public static final Relationship REL_SUCCESS = new Relationship.Builder()
+            .name("Success")
+            .description("Success relationship")
             .build();
 
     private List<PropertyDescriptor> descriptors;
@@ -72,7 +72,7 @@ public class MyProcessor extends AbstractProcessor {
         descriptors = Collections.unmodifiableList(descriptors);
 
         relationships = new HashSet<>();
-        relationships.add(MY_RELATIONSHIP);
+        relationships.add(REL_SUCCESS);
         relationships = Collections.unmodifiableSet(relationships);
     }
 
@@ -103,20 +103,25 @@ public class MyProcessor extends AbstractProcessor {
         session.read(flowFile, new InputStreamCallback() {
             @Override
             public void process(InputStream in) throws IOException {
-                String FragmentRDF = IOUtils.toString(in);
-                getLogger().warn(String.format("Got the following RDF: %s", FragmentRDF));
-                InputStream targetStream = IOUtils.toInputStream(FragmentRDF);
-                Model inputModel = Rio.parse(targetStream, "", RDFFormat.NQUADS);
+                try {
+                    String FragmentRDF = IOUtils.toString(in);
+                    InputStream targetStream = IOUtils.toInputStream(FragmentRDF);
+                    Model inputModel = Rio.parse(targetStream, "", RDFFormat.NQUADS);
 
-                Model versionMaterialisedModel = versionMaterialise(inputModel, isVersionOf);
-                Model outModel = reduceToLDESMemberOnlyModel(versionMaterialisedModel);
+                    Model versionMaterialisedModel = versionMaterialise(inputModel, isVersionOf);
+                    Model outModel = reduceToLDESMemberOnlyModel(versionMaterialisedModel);
 
-                Rio.write(outModel, outputStream, RDFFormat.TURTLE);
+                    Rio.write(outModel, outputStream, RDFFormat.NQUADS);
+                }
+                catch (Exception e) {
+                    getLogger().warn("Couldn't apply version materialisation on FlowFile.");
+                }
+
             }
         });
         
         flowFile = session.write(flowFile, out -> out.write(outputStream.toString().getBytes()));
-        session.transfer(flowFile, MY_RELATIONSHIP);
+        session.transfer(flowFile, REL_SUCCESS);
     }
 
 }
