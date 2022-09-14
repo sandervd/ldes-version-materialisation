@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.StringWriter;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static be.vlaanderen.informatievlaanderen.processors.VersionMaterialiser.reduceToLDESMemberOnlyModel;
 import static be.vlaanderen.informatievlaanderen.processors.VersionMaterialiser.versionMaterialise;
@@ -56,9 +57,25 @@ public class VersionMaterialiseProcessor extends AbstractProcessor {
             .addValidator(StandardValidators.URI_VALIDATOR)
             .build();
 
+    public static final PropertyDescriptor RESTRICT_OUTPUT_TO_MEMBER = new PropertyDescriptor
+            .Builder().name("MembersOnly")
+            .displayName("Restrict output to members")
+            .description("When enabled, only the member and the blank nodes references are included.")
+            .required(false)
+            .defaultValue("false")
+            .allowableValues("true", "false")
+            .addValidator(StandardValidators.BOOLEAN_VALIDATOR)
+            .build();
+
+
     public static final Relationship REL_SUCCESS = new Relationship.Builder()
             .name("Success")
             .description("Success relationship")
+            .build();
+
+    public static final Relationship REL_FAILURE = new Relationship.Builder()
+            .name("Failure")
+            .description("Failure relationship")
             .build();
 
     private List<PropertyDescriptor> descriptors;
@@ -69,10 +86,12 @@ public class VersionMaterialiseProcessor extends AbstractProcessor {
     protected void init(final ProcessorInitializationContext context) {
         descriptors = new ArrayList<>();
         descriptors.add(IS_VERSION_OF);
+        descriptors.add(RESTRICT_OUTPUT_TO_MEMBER);
         descriptors = Collections.unmodifiableList(descriptors);
 
         relationships = new HashSet<>();
         relationships.add(REL_SUCCESS);
+        relationships.add(REL_FAILURE);
         relationships = Collections.unmodifiableSet(relationships);
     }
 
@@ -86,19 +105,16 @@ public class VersionMaterialiseProcessor extends AbstractProcessor {
         return descriptors;
     }
 
-    @OnScheduled
-    public void onScheduled(final ProcessContext context) {
-
-    }
-
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) {
         FlowFile flowFile = session.get();
         IRI isVersionOf = vf.createIRI(context.getProperty(IS_VERSION_OF).getValue());
+        boolean RESTRICT_TO_MEMBERS = context.getProperty(RESTRICT_OUTPUT_TO_MEMBER).getValue().contentEquals("true");
 
         if ( flowFile == null ) {
             return;
         }
+        AtomicBoolean is_successful = new AtomicBoolean(false);
         StringWriter outputStream = new StringWriter();
         session.read(flowFile, new InputStreamCallback() {
             @Override
@@ -109,19 +125,26 @@ public class VersionMaterialiseProcessor extends AbstractProcessor {
                     Model inputModel = Rio.parse(targetStream, "", RDFFormat.NQUADS);
 
                     Model versionMaterialisedModel = versionMaterialise(inputModel, isVersionOf);
-                    Model outModel = reduceToLDESMemberOnlyModel(versionMaterialisedModel);
+                    if (RESTRICT_TO_MEMBERS)
+                        versionMaterialisedModel = reduceToLDESMemberOnlyModel(versionMaterialisedModel);
 
-                    Rio.write(outModel, outputStream, RDFFormat.NQUADS);
+                    Rio.write(versionMaterialisedModel, outputStream, RDFFormat.NQUADS);
+                    is_successful.set(true);
                 }
                 catch (Exception e) {
                     getLogger().warn("Couldn't apply version materialisation on FlowFile.");
+                    throw new RuntimeException(e);
                 }
 
             }
         });
-        
-        flowFile = session.write(flowFile, out -> out.write(outputStream.toString().getBytes()));
-        session.transfer(flowFile, REL_SUCCESS);
+        if (is_successful.get()) {
+            flowFile = session.write(flowFile, out -> out.write(outputStream.toString().getBytes()));
+            session.transfer(flowFile, REL_SUCCESS);
+        }
+        else
+            session.transfer(flowFile, REL_FAILURE);
+
     }
 
 }

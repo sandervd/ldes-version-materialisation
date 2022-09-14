@@ -16,6 +16,9 @@
  */
 package be.vlaanderen.informatievlaanderen.processors;
 
+import org.apache.commons.io.IOUtils;
+import org.apache.jena.assembler.Mode;
+import org.apache.nifi.util.MockFlowFile;
 import org.apache.nifi.util.TestRunner;
 import org.apache.nifi.util.TestRunners;
 import org.eclipse.rdf4j.model.Model;
@@ -28,6 +31,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.io.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 
 public class VersionMaterialiseProcessorTest {
@@ -47,17 +52,65 @@ public class VersionMaterialiseProcessorTest {
      * @throws IOException
      */
     @Test
-    public void testVersionMaterialise() throws IOException {
-        InputStream versionedInput = new FileInputStream("src/test/resources/ldes-member-versioned.ttl");
-        Model VersionedModel = Rio.parse(versionedInput, "", RDFFormat.TURTLE);
+    public void testVersionMaterialiseMemberOnly() throws IOException {
+        final TestRunner testRunner = TestRunners.newTestRunner(VersionMaterialiseProcessor.class);
 
-        InputStream unVersionedInput = new FileInputStream("src/test/resources/ldes-member-unversioned.ttl");
-        Model ComparisonModel = Rio.parse(unVersionedInput, "", RDFFormat.TURTLE);
+        testRunner.setProperty(VersionMaterialiseProcessor.IS_VERSION_OF, "http://purl.org/dc/terms/isVersionOf");
+        testRunner.setProperty(VersionMaterialiseProcessor.RESTRICT_OUTPUT_TO_MEMBER, "true");
 
-        Model unversionedModel = VersionMaterialiser.versionMaterialise(VersionedModel, vf.createIRI("http://purl.org/dc/terms/isVersionOf"));
-        Model membersOnlyModel = VersionMaterialiser.reduceToLDESMemberOnlyModel(unversionedModel);
+        String versionedMember = turtleFileToQuadString("src/test/resources/ldes-member-versioned.ttl");
+        testRunner.enqueue(versionedMember);
 
-        assert Models.isomorphic(membersOnlyModel, ComparisonModel);
+        testRunner.run();
+
+        MockFlowFile FlowFileOut = testRunner.getFlowFilesForRelationship(VersionMaterialiseProcessor.REL_SUCCESS).get(0);
+        Model FlowFileOutModel = Rio.parse(FlowFileOut.getContentStream(), "", RDFFormat.NQUADS);
+        InputStream ComparisonFile = new FileInputStream("src/test/resources/ldes-member-unversioned.ttl");
+        Model ComparisonModel = Rio.parse(ComparisonFile, "", RDFFormat.TURTLE);
+
+        assert Models.isomorphic(FlowFileOutModel, ComparisonModel);
+    }
+
+    /**
+     * Assert that a test file can be version materialised successfully.
+     *
+     * @throws IOException
+     */
+    @Test
+    public void testVersionMaterialiseWithContext() throws IOException {
+        final TestRunner testRunner = TestRunners.newTestRunner(VersionMaterialiseProcessor.class);
+
+        testRunner.setProperty(VersionMaterialiseProcessor.IS_VERSION_OF, "http://purl.org/dc/terms/isVersionOf");
+        testRunner.setProperty(VersionMaterialiseProcessor.RESTRICT_OUTPUT_TO_MEMBER, "false");
+
+        String versionedMember = turtleFileToQuadString("src/test/resources/ldes-member-versioned.ttl");
+        testRunner.enqueue(versionedMember);
+
+        testRunner.run();
+
+        MockFlowFile FlowFileOut = testRunner.getFlowFilesForRelationship(VersionMaterialiseProcessor.REL_SUCCESS).get(0);
+        Model FlowFileOutModel = Rio.parse(FlowFileOut.getContentStream(), "", RDFFormat.NQUADS);
+        InputStream ComparisonFile = new FileInputStream("src/test/resources/ldes-member-unversioned-context-included.ttl");
+        Model ComparisonModel = Rio.parse(ComparisonFile, "", RDFFormat.TURTLE);
+
+        assert Models.isomorphic(FlowFileOutModel, ComparisonModel);
+    }
+
+    private String turtleFileToQuadString(String filename) {
+        StringWriter VersionedNQuads = new StringWriter();
+        try {
+            Path filePath = Path.of(filename);
+            // Processor needs nquads for now.
+            String versionedInput = Files.readString(filePath);
+            InputStream versionedInputStream = IOUtils.toInputStream(versionedInput);
+            Model versionedModel = Rio.parse(versionedInputStream, "", RDFFormat.TURTLE);
+
+            Rio.write(versionedModel, VersionedNQuads, RDFFormat.NQUADS);
+        }
+        catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+        return VersionedNQuads.toString();
     }
 
 }
